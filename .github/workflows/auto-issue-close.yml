@@ -1,0 +1,53 @@
+name: Close Linked Issues on PR Merge
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  closeLinkedIssues:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Close linked issues
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        PR_BODY="${{ github.event.pull_request.body }}"
+        REPO="${{ github.repository }}"
+        ISSUES=$(echo "$PR_BODY" | grep -oP '(?<=#)\d+')
+        
+        for ISSUE in $ISSUES; do
+          COMMENT=$(cat <<EOF
+          {
+            "body": "This issue has been automatically closed because the linked pull request has been merged."
+          }
+          EOF
+          )
+          
+          RESPONSE=$(curl -s -o response.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/$REPO/issues/$ISSUE/comments \
+            -d "$COMMENT")
+          
+          if [ "$RESPONSE" -eq 201 ]; then
+            curl -s -X PATCH \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/$REPO/issues/$ISSUE \
+              -d '{"state":"closed"}'
+          else
+            echo "Failed to add comment or close issue #$ISSUE"
+            exit 1
+          fi
+        done
